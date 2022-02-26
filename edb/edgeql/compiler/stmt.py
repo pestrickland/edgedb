@@ -181,6 +181,7 @@ def compile_ForQuery(
                 binding_kind=irast.BindingKind.For,
                 ctx=ectx,
             )
+            _clear_view_binding_expr(iterator_view, ctx=ectx)
 
         iterator_stmt = setgen.new_set_from_set(
             iterator_view, preserve_scope_ns=True, ctx=sctx)
@@ -277,6 +278,18 @@ def _make_group_binding(
     return binding_set
 
 
+def _clear_view_binding_expr(
+    view_set: irast.Set, *, ctx: context.ContextLevel
+) -> None:
+    view_type = setgen.get_set_type(view_set, ctx=ctx)
+    if view_type in ctx.view_sets:
+        new_set = setgen.new_set_from_set(
+            ctx.view_sets[view_type], preserve_scope_ns=True, ctx=ctx)
+        new_set.expr = None
+        ctx.view_sets[view_type] = new_set
+        ctx.path_scope_map[new_set] = ctx.path_scope_map[view_set]
+
+
 @dispatch.compile.register(qlast.InternalGroupQuery)
 def compile_InternalGroupQuery(
     expr: qlast.InternalGroupQuery, *, ctx: context.ContextLevel
@@ -333,6 +346,12 @@ def compile_InternalGroupQuery(
                     binding.context = using_entry.expr.context
                     stmt.using[using_entry.alias] = (
                         binding, qltypes.Cardinality.UNKNOWN)
+
+            for using_value, _ in stmt.using.values():
+                # We do this after compiling all of them so that
+                # cardinality inference inside the bindings doesn't
+                # get messed up.
+                _clear_view_binding_expr(using_value, ctx=topctx)
 
             subject_stype = setgen.get_set_type(stmt.subject, ctx=topctx)
             stmt.group_binding = _make_group_binding(
